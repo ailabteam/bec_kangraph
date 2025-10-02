@@ -1,0 +1,8 @@
+              precision    recall  f1-score   support
+
+     HAM (0)       1.00      0.82      0.90       628
+     BEC (1)       0.35      1.00      0.52        60
+
+    accuracy                           0.84       688
+   macro avg       0.68      0.91      0.71       688
+weighted avg       0.94      0.84      0.87       688

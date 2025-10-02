@@ -2,166 +2,181 @@ import pandas as pd
 import numpy as np
 import os
 import re
-from tqdm import tqdm
+import warnings
 
+# Scikit-learn imports
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
-import seaborn as sns
-import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.utils.class_weight import compute_class_weight
 
+# PyTorch and Hugging Face imports
 import torch
 from transformers import DistilBertTokenizer, DistilBertForSequenceClassification, Trainer, TrainingArguments
 from datasets import Dataset
 
+# Matplotlib and Seaborn for plotting
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Ignore warnings
+warnings.filterwarnings("ignore")
+
+
 def clean_text(text):
-    """Một hàm làm sạch văn bản đơn giản."""
-    if not isinstance(text, str):
-        return ""
-    text = text.lower()  # Chuyển về chữ thường
-    text = re.sub(r'http\S+', '', text)  # Xóa URL
-    text = re.sub(r'\S+@\S+', '', text)  # Xóa email
-    text = re.sub(r'[^a-z\s]', '', text)  # Chỉ giữ lại chữ cái và khoảng trắng
-    text = re.sub(r'\s+', ' ', text).strip()  # Xóa các khoảng trắng thừa
+    if not isinstance(text, str): return ""
+    text = text.lower()
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\S+@\S+', '', text)
+    text = re.sub(r'[^a-z\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-def train_naive_bayes(df):
-    """Huấn luyện và đánh giá mô hình Naive Bayes."""
-    print("\n--- Bắt đầu huấn luyện mô hình Naive Bayes ---")
+def train_naive_bayes(df, output_dir):
+    print("\n" + "="*50)
+    print("--- Bắt đầu huấn luyện mô-đun: Naive Bayes ---")
+    print("="*50)
     
-    # 1. Tiền xử lý
     df['clean_text'] = df['text'].apply(clean_text)
-    
-    # 2. Chia dữ liệu
     X_train, X_test, y_train, y_test = train_test_split(
         df['clean_text'], df['label'], test_size=0.2, random_state=42, stratify=df['label']
     )
     
-    # 3. Vector hóa
+    print("Vector hóa văn bản sử dụng TF-IDF...")
     vectorizer = TfidfVectorizer(stop_words='english', max_features=5000)
     X_train_tfidf = vectorizer.fit_transform(X_train)
     X_test_tfidf = vectorizer.transform(X_test)
     
-    # 4. Huấn luyện
+    print("Huấn luyện mô hình Naive Bayes...")
     model = MultinomialNB()
     model.fit(X_train_tfidf, y_train)
     
-    # 5. Đánh giá
+    print("Đánh giá mô hình trên tập test...")
     y_pred = model.predict(X_test_tfidf)
     
-    print("Kết quả Naive Bayes:")
-    report = classification_report(y_test, y_pred, target_names=['HAM', 'BEC'])
+    report = classification_report(y_test, y_pred, target_names=['HAM (0)', 'BEC (1)'], zero_division=0)
+    print("\n--- Kết quả Naive Bayes ---")
     print(report)
     
-    # Lưu kết quả
-    output_dir = 'analysis_outputs'
-    with open(os.path.join(output_dir, 'naive_bayes_report.txt'), 'w') as f:
-        f.write("--- Classification Report for Naive Bayes ---\n")
-        f.write(report)
-    print(f"Báo cáo kết quả Naive Bayes đã được lưu vào '{output_dir}/naive_bayes_report.txt'")
-    
-    # Vẽ và lưu ma trận nhầm lẫn
+    with open(os.path.join(output_dir, 'naive_bayes_report.txt'), 'w') as f: f.write(report)
     cm = confusion_matrix(y_test, y_pred)
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['HAM', 'BEC'], yticklabels=['HAM', 'BEC'])
     plt.title('Ma trận nhầm lẫn - Naive Bayes')
-    plt.xlabel('Dự đoán')
-    plt.ylabel('Thực tế')
+    plt.xlabel('Dự đoán'); plt.ylabel('Thực tế')
     plt.savefig(os.path.join(output_dir, 'naive_bayes_cm.png'), dpi=600, bbox_inches='tight')
     plt.close()
-    print(f"Ma trận nhầm lẫn Naive Bayes đã được lưu vào '{output_dir}/naive_bayes_cm.png'")
+    print(f"Kết quả Naive Bayes đã được lưu vào thư mục '{output_dir}'")
 
+def train_distilbert(df, output_dir):
+    print("\n" + "="*50)
+    print("--- Bắt đầu huấn luyện mô-đun: DistilBERT ---")
+    print("="*50)
 
-def train_distilbert(df):
-    """Huấn luyện và đánh giá mô hình DistilBERT."""
-    print("\n--- Bắt đầu huấn luyện mô hình DistilBERT ---")
-    
-    # 1. Chuẩn bị dữ liệu
-    # Lấy một tập con nhỏ hơn để huấn luyện nhanh hơn cho lần thử đầu
-    # Bạn có thể bỏ dòng này để huấn luyện trên toàn bộ dữ liệu
-    df_sample = df.sample(n=1000, random_state=42) if len(df) > 1000 else df
-    
-    train_df, test_df = train_test_split(df_sample, test_size=0.2, random_state=42, stratify=df_sample['label'])
+    df['text'] = df['text'].astype(str)
+    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df['label'])
     
     train_dataset = Dataset.from_pandas(train_df)
     test_dataset = Dataset.from_pandas(test_df)
     
-    # 2. Tokenization
-    tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+    print("Tải tokenizer và token hóa dữ liệu...")
+    model_name = 'distilbert-base-uncased'
+    tokenizer = DistilBertTokenizer.from_pretrained(model_name)
 
     def tokenize_function(examples):
         return tokenizer(examples['text'], padding="max_length", truncation=True, max_length=512)
 
     train_dataset = train_dataset.map(tokenize_function, batched=True)
     test_dataset = test_dataset.map(tokenize_function, batched=True)
+
+    class_weights = compute_class_weight('balanced', classes=np.unique(df['label']), y=df['label'])
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
     
-    # 3. Thiết lập mô hình và training arguments
-    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=2)
+    class CustomTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False):
+            labels = inputs.get("labels")
+            outputs = model(**inputs)
+            logits = outputs.get("logits")
+            loss_fct = torch.nn.CrossEntropyLoss(weight=class_weights_tensor)
+            loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+            return (loss, outputs) if return_outputs else loss
+
+    print("Thiết lập mô hình và các tham số huấn luyện...")
+    model = DistilBertForSequenceClassification.from_pretrained(model_name, num_labels=2)
     
-    output_dir = 'analysis_outputs'
+    # SỬA LỖI: Sử dụng các tên tham số chắc chắn tương thích
     training_args = TrainingArguments(
         output_dir=os.path.join(output_dir, 'distilbert_results'),
-        num_train_epochs=3,
-        per_device_train_batch_size=8, # Giảm nếu gặp lỗi CUDA out of memory
-        per_device_eval_batch_size=8,
-        warmup_steps=500,
+        num_train_epochs=4,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        warmup_ratio=0.1,
         weight_decay=0.01,
-        logging_dir=os.path.join(output_dir, 'distilbert_logs'),
-        logging_steps=10,
-        evaluation_strategy="epoch",
+        logging_strategy="epoch",
+        evaluation_strategy="epoch",  # `evaluation_strategy` là tên chính thức và nên hoạt động
         save_strategy="epoch",
         load_best_model_at_end=True,
+        metric_for_best_model="f1",
+        greater_is_better=True,
+        report_to="none"
     )
     
-    # 4. Huấn luyện
-    trainer = Trainer(
+    def compute_metrics(eval_pred):
+        predictions, labels = eval_pred
+        predictions = np.argmax(predictions, axis=1)
+        # Tính F1 score cho lớp 1 (BEC)
+        f1 = f1_score(labels, predictions, pos_label=1, average='binary')
+        return {"f1": f1}
+
+    trainer = CustomTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=test_dataset,
+        tokenizer=tokenizer,
+        compute_metrics=compute_metrics
     )
     
+    print("Bắt đầu quá trình huấn luyện DistilBERT...")
     trainer.train()
     
-    # 5. Đánh giá
+    print("Đánh giá mô hình tốt nhất trên tập test...")
     predictions = trainer.predict(test_dataset)
     y_pred = np.argmax(predictions.predictions, axis=1)
     y_test = test_dataset['label']
     
-    print("Kết quả DistilBERT:")
-    report = classification_report(y_test, y_pred, target_names=['HAM', 'BEC'])
-    print(report)
-    
+    report_str = classification_report(y_test, y_pred, target_names=['HAM (0)', 'BEC (1)'], zero_division=0)
+    print("\n--- Kết quả DistilBERT ---")
+    print(report_str)
+
     with open(os.path.join(output_dir, 'distilbert_report.txt'), 'w') as f:
-        f.write("--- Classification Report for DistilBERT ---\n")
-        f.write(report)
-    print(f"Báo cáo kết quả DistilBERT đã được lưu vào '{output_dir}/distilbert_report.txt'")
-    
+        f.write(report_str)
+        
     cm = confusion_matrix(y_test, y_pred)
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['HAM', 'BEC'], yticklabels=['HAM', 'BEC'])
     plt.title('Ma trận nhầm lẫn - DistilBERT')
-    plt.xlabel('Dự đoán')
-    plt.ylabel('Thực tế')
+    plt.xlabel('Dự đoán'); plt.ylabel('Thực tế')
     plt.savefig(os.path.join(output_dir, 'distilbert_cm.png'), dpi=600, bbox_inches='tight')
     plt.close()
-    print(f"Ma trận nhầm lẫn DistilBERT đã được lưu vào '{output_dir}/distilbert_cm.png'")
-
+    
+    print(f"Kết quả DistilBERT đã được lưu vào thư mục '{output_dir}'")
 
 def main():
-    """Hàm chính để chạy các mô hình."""
-    data_path = 'analysis_outputs/combined_dataset_v2.csv'
+    output_dir = 'analysis_outputs'
+    os.makedirs(output_dir, exist_ok=True)
+
+    data_path = os.path.join(output_dir, 'combined_dataset_v2.csv')
     if not os.path.exists(data_path):
-        print(f"Lỗi: Không tìm thấy file {data_path}. Vui lòng chạy script 01_explore_data.py trước.")
+        print(f"Lỗi: Không tìm thấy file {data_path}. Vui lòng chạy 01_explore_data.py trước.")
         return
         
     df = pd.read_csv(data_path)
-    df.dropna(subset=['text'], inplace=True)
-
-    # Chạy các mô hình
-    train_naive_bayes(df.copy())
-    train_distilbert(df.copy())
+    
+    train_naive_bayes(df.copy(), output_dir)
+    train_distilbert(df.copy(), output_dir)
 
 if __name__ == '__main__':
     main()
