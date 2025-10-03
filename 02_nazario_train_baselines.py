@@ -22,24 +22,18 @@ import seaborn as sns
 
 warnings.filterwarnings("ignore")
 
-# === SỬA LỖI: THÊM LẠI HÀM CLEAN_TEXT ===
 def clean_text(text):
-    """Một hàm làm sạch văn bản đơn giản."""
-    if not isinstance(text, str):
-        return ""
-    text = text.lower()  # Chuyển về chữ thường
-    text = re.sub(r'http\S+', '', text)  # Xóa URL
-    text = re.sub(r'\S+@\S+', '', text)  # Xóa email
-    text = re.sub(r'[^a-z\s]', '', text)  # Chỉ giữ lại chữ cái và khoảng trắng
-    text = re.sub(r'\s+', ' ', text).strip()  # Xóa các khoảng trắng thừa
+    if not isinstance(text, str): return ""
+    text = text.lower()
+    text = re.sub(r'http\S+', '', text)
+    text = re.sub(r'\S+@\S+', '', text)
+    text = re.sub(r'[^a-z\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
     return text
-# ==========================================
-
 
 def train_naive_bayes(df, output_dir, suffix=""):
-    """Huấn luyện và đánh giá mô hình Naive Bayes."""
     print("\n" + "="*50)
-    print(f"--- Bắt đầu huấn luyện mô-đun: Naive Bayes (Dataset{suffix}) ---")
+    print(f"--- Starting: Naive Bayes (Dataset{suffix}) ---")
     print("="*50)
     
     df['clean_text'] = df['text'].apply(clean_text)
@@ -47,7 +41,7 @@ def train_naive_bayes(df, output_dir, suffix=""):
         df['clean_text'], df['label'], test_size=0.2, random_state=42, stratify=df['label']
     )
     
-    vectorizer = TfidfVectorizer(stop_words='english', max_features=5000)
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=10000) # Tăng max_features cho bộ dữ liệu lớn hơn
     X_train_tfidf = vectorizer.fit_transform(X_train)
     X_test_tfidf = vectorizer.transform(X_test)
     
@@ -55,28 +49,24 @@ def train_naive_bayes(df, output_dir, suffix=""):
     model.fit(X_train_tfidf, y_train)
     
     y_pred = model.predict(X_test_tfidf)
-    report = classification_report(y_test, y_pred, target_names=['HAM (0)', 'BEC (1)'], zero_division=0)
+    report = classification_report(y_test, y_pred, target_names=['Safe (0)', 'Phishing (1)'], zero_division=0)
     
-    print(f"\n--- Kết quả Naive Bayes (Dataset{suffix}) ---")
+    print(f"\n--- Results: Naive Bayes (Dataset{suffix}) ---")
     print(report)
     
-    with open(os.path.join(output_dir, f'naive_bayes_report{suffix}.txt'), 'w') as f:
-        f.write(report)
-        
+    with open(os.path.join(output_dir, f'naive_bayes_report{suffix}.txt'), 'w') as f: f.write(report)
     cm = confusion_matrix(y_test, y_pred)
     plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['HAM', 'BEC'], yticklabels=['HAM', 'BEC'])
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Safe', 'Phishing'], yticklabels=['Safe', 'Phishing'])
     plt.title(f'Confusion Matrix - Naive Bayes (Dataset{suffix})')
     plt.xlabel('Predicted'); plt.ylabel('Actual')
     plt.savefig(os.path.join(output_dir, f'naive_bayes_cm{suffix}.png'), dpi=600, bbox_inches='tight')
     plt.close()
-    
-    print(f"Kết quả Naive Bayes (Dataset{suffix}) đã được lưu.")
+    print(f"Naive Bayes results (Dataset{suffix}) saved.")
 
 def train_distilbert(df, output_dir, suffix=""):
-    """Huấn luyện và đánh giá mô hình DistilBERT."""
     print("\n" + "="*50)
-    print(f"--- Bắt đầu huấn luyện mô-đun: DistilBERT (Dataset{suffix}) ---")
+    print(f"--- Starting: DistilBERT (Dataset{suffix}) ---")
     print("="*50)
     
     df['text'] = df['text'].astype(str)
@@ -94,26 +84,15 @@ def train_distilbert(df, output_dir, suffix=""):
     train_dataset = train_dataset.map(tokenize_function, batched=True)
     test_dataset = test_dataset.map(tokenize_function, batched=True)
 
-    class_weights = compute_class_weight('balanced', classes=np.unique(df['label']), y=df['label'])
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
-
-    class CustomTrainer(Trainer):
-        def compute_loss(self, model, inputs, return_outputs=False):
-            labels = inputs.get("labels")
-            outputs = model(**inputs)
-            logits = outputs.get("logits")
-            loss_fct = torch.nn.CrossEntropyLoss(weight=class_weights_tensor)
-            loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
-            return (loss, outputs) if return_outputs else loss
+    # Dữ liệu khá cân bằng, không cần class weights
     
     model = DistilBertForSequenceClassification.from_pretrained(model_name, num_labels=2)
     
     training_args = TrainingArguments(
         output_dir=os.path.join(output_dir, f'distilbert_results{suffix}'),
-        num_train_epochs=10,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
+        num_train_epochs=3, # 3 epochs là đủ cho bộ dữ liệu cỡ này
+        per_device_train_batch_size=16, # Tăng batch size
+        per_device_eval_batch_size=16,
         warmup_ratio=0.1,
         weight_decay=0.01,
         logging_strategy="epoch",
@@ -131,7 +110,7 @@ def train_distilbert(df, output_dir, suffix=""):
         f1 = f1_score(labels, predictions, pos_label=1, average='binary')
         return {"f1": f1}
 
-    trainer = CustomTrainer(model=model, args=training_args, train_dataset=train_dataset, eval_dataset=test_dataset, tokenizer=tokenizer, compute_metrics=compute_metrics)
+    trainer = Trainer(model=model, args=training_args, train_dataset=train_dataset, eval_dataset=test_dataset, tokenizer=tokenizer, compute_metrics=compute_metrics)
     
     trainer.train()
     
@@ -139,37 +118,35 @@ def train_distilbert(df, output_dir, suffix=""):
     y_pred = np.argmax(predictions.predictions, axis=1)
     y_test = test_dataset['label']
     
-    report_str = classification_report(y_test, y_pred, target_names=['HAM (0)', 'BEC (1)'], zero_division=0)
-    print(f"\n--- Kết quả DistilBERT (Dataset{suffix}) ---")
+    report_str = classification_report(y_test, y_pred, target_names=['Safe (0)', 'Phishing (1)'], zero_division=0)
+    print(f"\n--- Results: DistilBERT (Dataset{suffix}) ---")
     print(report_str)
 
-    with open(os.path.join(output_dir, f'distilbert_report{suffix}.txt'), 'w') as f:
-        f.write(report_str)
-        
+    with open(os.path.join(output_dir, f'distilbert_report{suffix}.txt'), 'w') as f: f.write(report_str)
     cm = confusion_matrix(y_test, y_pred)
     plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['HAM', 'BEC'], yticklabels=['HAM', 'BEC'])
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Safe', 'Phishing'], yticklabels=['Safe', 'Phishing'])
     plt.title(f'Confusion Matrix - DistilBERT (Dataset{suffix})')
     plt.xlabel('Predicted'); plt.ylabel('Actual')
     plt.savefig(os.path.join(output_dir, f'distilbert_cm{suffix}.png'), dpi=600, bbox_inches='tight')
     plt.close()
     
-    print(f"Kết quả DistilBERT (Dataset{suffix}) đã được lưu.")
+    print(f"DistilBERT results (Dataset{suffix}) saved.")
 
 def main():
     output_dir = 'analysis_outputs'
     os.makedirs(output_dir, exist_ok=True)
 
-    data_path = os.path.join(output_dir, 'combined_dataset_v4_hard.csv') 
+    data_path = os.path.join(output_dir, 'combined_dataset_nazario.csv') 
     
     if not os.path.exists(data_path):
-        print(f"Lỗi: Không tìm thấy file {data_path}. Vui lòng chạy 00b_create_hard_negatives.py trước.")
+        print(f"Error: Dataset not found at {data_path}. Please run 01_nazario_explore.py first.")
         return
         
     df = pd.read_csv(data_path)
     
-    train_naive_bayes(df.copy(), output_dir, suffix="_v4_hard")
-    train_distilbert(df.copy(), output_dir, suffix="_v4_hard")
+    train_naive_bayes(df.copy(), output_dir, suffix="_nazario")
+    train_distilbert(df.copy(), output_dir, suffix="_nazario")
 
 if __name__ == '__main__':
     main()

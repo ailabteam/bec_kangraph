@@ -43,7 +43,7 @@ def main():
     
     output_dir = 'analysis_outputs'
     os.makedirs(output_dir, exist_ok=True)
-    data_path = os.path.join(output_dir, 'combined_dataset_v2.csv')
+    data_path = os.path.join(output_dir, 'combined_dataset_v3.csv')
     
     df = pd.read_csv(data_path)
     df.dropna(subset=['text'], inplace=True)
@@ -108,7 +108,7 @@ def main():
     print("\n--- Thông tin Đồ thị Không đồng nhất ---")
     print(data)
     
-    graph_path = os.path.join(output_dir, 'hetero_graph.pt')
+    graph_path = os.path.join(output_dir, 'hetero_graph_v2.pt')
     torch.save(data, graph_path)
     print(f"\nĐồ thị không đồng nhất đã được lưu vào: {graph_path}")
     print("--- Hoàn thành! ---")

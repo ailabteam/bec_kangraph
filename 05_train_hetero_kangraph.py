@@ -91,7 +91,7 @@ def main():
     print("--- Bắt đầu huấn luyện KANGuard trên Đồ thị Không đồng nhất (v4) ---")
     
     output_dir = 'analysis_outputs'
-    graph_path = os.path.join(output_dir, 'hetero_graph.pt')
+    graph_path = os.path.join(output_dir, 'hetero_graph_v2.pt')
     if not os.path.exists(graph_path):
         print(f"Lỗi: Không tìm thấy file đồ thị. Vui lòng chạy 04_build_hetero_graph.py trước.")
         return
